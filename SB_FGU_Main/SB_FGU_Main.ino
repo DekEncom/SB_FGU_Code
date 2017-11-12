@@ -1,10 +1,10 @@
+#include <Servo.h>
 #include <Firebase.h>
 #include <FirebaseArduino.h>
 #include <FirebaseCloudMessaging.h>
 #include <FirebaseError.h>
 #include <FirebaseHttpClient.h>
 #include <FirebaseObject.h>
-#include <Servo.h>
 #include <ESP8266WiFi.h>
 #include <Wire.h> 
 #include <LiquidCrystal_I2C.h>
@@ -17,6 +17,10 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 // Config connect WiFi
 #define WIFI_SSID "ESP_Test"
 #define WIFI_PASSWORD "123456789"
+
+//Countdown time
+#define Set_minuite 3
+#define Set_second 60
 
 Servo myservo;
 
@@ -41,8 +45,12 @@ int IF_1;
 int buttonState;
 //Output
 const byte ButtonPin = D7 ;
-const byte Buzzer = D4
+const byte Buzzer = D4;
 
+/*Setup TimerCounter*/
+unsigned long previousTime = 0;
+unsigned long showTime;
+int minuite = 0;
 
 /*Parameter Random Code*/
 long randNumber;
@@ -54,15 +62,16 @@ void Count_Bot(){
 }
 
 void Gen_Code(){
-    ST_Gencode = 1
+    ST_Gencode = 1;
 }
 
 
 void setup() {
-  Serial.begin(115200);
+    Serial.begin(115200);
    /*Setup Server Pin  & Position*/
     myservo.attach(D3);
     myservo.write(180);
+   
 
    /*Setup I2C Pin  & Cursor Position*/
    Wire.begin(D6,D5); //(SDA,SCL)
@@ -78,20 +87,48 @@ void setup() {
     pinMode(Buzzer, OUTPUT);
     /*Setup Random Number*/
     randomSeed(analogRead(0)); // nothing connected to 0 so read sees noise
+
+     // WiFi Config & Setup 
+    WiFi.mode(WIFI_STA);
+    // connect to wifi.
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("connecting"); 
+        while (WiFi.status() != WL_CONNECTED){
+          ConnectWiFi();
+          Serial.print(".");
+          delay(500);
+        }    
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("   connected   ");
+    delay(200);
+    lcd.setCursor(0, 1);
+    lcd.print(WiFi.localIP());
+    Serial.println();  
+    Serial.print("connected: ");
+    Serial.println(WiFi.localIP());
+    
     /*Setup Interupt Functions*/
     attachInterrupt(digitalPinToInterrupt(IF_2),Count_Bot,CHANGE);
     attachInterrupt(digitalPinToInterrupt(Bt_Pin), Gen_Code , CHANGE);
 
     // Firebase Connect database
     Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
+    FirebaseObject Data = Firebase.get("LogUser/Lasted");
 }
 
 void loop() {
      IF_1 =  digitalRead(D1);
-     buttonState = digitalRead(buttonPin);   
- 
+     
+     buttonState = digitalRead(ButtonPin);  
+    int TimeCount =  Time_Counter(Set_second);
+    Serial.print(showTime);
+    Serial.print("  ");
+    Serial.println(TimeCount);
     if(STATE == 0){
+             FirebaseObject Data = Firebase.get("LogUser/Lasted");
              String  Uid = Data.getString("/Uid");
+             
              int Status  = Data.getInt("/StatusDevice");
                  if(Status == 0){
                        lcd.clear();
@@ -100,7 +137,7 @@ void loop() {
                             lcd.setCursor(0, 1);
                             lcd.print(" Smart Bin FGU ");
                             delay(2000);                          
-                                for(int i=0; i <3;i++){   
+                                for(int i=0; i < 3;i++){   
                                       lcd.clear();                                
                                           lcd.noDisplay();
                                           delay(500);             
@@ -114,7 +151,8 @@ void loop() {
                                lcd.clear();  
                   }
                   else if(Status == 1){
-                             if(!ST_Gencode){
+                           
+                             if(!ST_Gencode){ 
                                     lcd.noDisplay();
                                     delay(500); 
                                          lcd.setCursor(0, 0); 
@@ -129,12 +167,7 @@ void loop() {
                                     do{
                                           //lcd.clear();
                                            randNumber = random(100000,999999); // generate random number between 1 & 5 (minimum is inclusive, maximum is exclusive)
-                                           Serial.println(randNumber); // show the value in Serial Monitor
-                                           lcd.setCursor(0, 1); 
-                                           lcd.print("Code: ");
-                                           lcd.setCursor(6, 1); 
-                                           lcd.print(randNumber);
-                                            
+                                           Serial.println(randNumber); // show the value in Serial Monitor 
                                            Firebase.setString("/LogUser/CodeGen/Uid", Uid);
                                            Firebase.setInt("/LogUser/CodeGen/Code", randNumber);
                                                if (Firebase.failed()) {
@@ -144,16 +177,21 @@ void loop() {
                                                   return;
                                                 }
                                                else{
-                                                   Serial.print("Set Code Success!");
+                                                   Firebase.setInt("/LogUser/CodeGen/AuthenCode/Status" , 1);
+                                                   //Serial.print("Set Code Success!");
                                                    lcd.clear();
                                                    lcd.setCursor(0, 0); 
-                                                   lcd.print(" Wait a Miniute ");
+                                                   lcd.print("Gencode  Success");
+                                                   lcd.setCursor(0, 1); 
+                                                   lcd.print("Code: ");
+                                                   lcd.setCursor(6, 1); 
+                                                   lcd.print(randNumber);
                                                    delay(3000);
                                                 } 
                                             delay(1000);
                                             
                                       }while(randNumber == prevRand); 
-                                  
+                                          
                                    prevRand = randNumber;   
                                    ST_Gencode = 0; 
                                    STATE = 1;
@@ -171,44 +209,42 @@ void loop() {
                             Ready_ToPush();
                        }
                        else{
+                              //Serial.println(IF_1);
+                              //Serial.println(TimeCount);
                                if(IF_1 == 0){
-                                                 delay(500);
-                                                 myservo.write(90);
-                                                 Serial.println("Servo On");
-                                                 //Long_beep(700);
-                                                 myservo.write(180);
-                                                 Serial.println("Servo Off");
-                                                 delay(500);
-                                                } 
-          
-                                 switch (state){
-                                              case 1:{                                                         
-                                                           Count++; 
-                                                           beep(150);
-                                                           beep(150);   
-                                                           lcd.clear();            
-                                                           lcd.setCursor(0, 0);
-                                                           lcd.print("Bottle Insert!!");
-                                                           lcd.setCursor(0, 1);
-                                                           lcd.print(">>>  ");
-                                                           lcd.setCursor(5, 1);
-                                                           lcd.print(Count);
-                                                           lcd.setCursor(10, 1);
-                                                           lcd.print("Bottles");     
-                                                           CheckState_Bottle = 0;
-                                                            delay(500);
-                                                      }break;                                                        
-                                                 default:
-                                                      // Code
-                                                      break;                
-                                  }
-                          
-                              
-                          
-                               if(buttonState){                                     
+                                            beep(500);     
+                                            myservo.write(90);
+                                            Serial.println("Servo On");
+                                            delay(400);                                           
+                                            myservo.write(180);
+                                            Serial.println("Servo Off");
+                                            delay(200);
+                                 }           
+                                               switch (CheckState_Bottle){
+                                                            case 1:{                                                         
+                                                                         Count++; 
+                                                                         beep(200);
+                                                                         beep(200);   
+                                                                         lcd.clear();            
+                                                                         lcd.setCursor(0, 0);
+                                                                         lcd.print("Bottle Insert!!");
+                                                                         lcd.setCursor(0, 1);
+                                                                         lcd.print(">>>  ");
+                                                                         lcd.setCursor(5, 1);
+                                                                         lcd.print(Count);
+                                                                         lcd.setCursor(10, 1);
+                                                                         lcd.print("Bottles");     
+                                                                         CheckState_Bottle = 0;
+                                                                          delay(500);
+                                                                    }break;                                                        
+                                                               default:
+                                                                    // Code
+                                                                    break;                
+                                                }                         
+                                 if(buttonState){                                     
                                                Insert_Data(); 
                                                beep(1000);
-                                                    for(int i=0; i <3;i++){ 
+                                                    for(int i = 0; i <3 ;i++){ 
                                                             lcd.noDisplay();
                                                             delay(500);
                                                                 lcd.setCursor(0, 0);
@@ -218,19 +254,32 @@ void loop() {
                                                             lcd.display();
                                                             delay(500);
                                                     }
-                                                LED_Blink(3);
+                                                //LED_Blink(3);
+                                                 beep(200);
+                                                 beep(200);
+                                                 beep(200);
                                                 lcd.clear(); 
-                                                     
                                               STATE = 0;
+                                              Firebase.setInt("/LogUser/CodeGen/AuthenCode/Status" , 0);
                                               delay(2000);       
                                 }
+                                
+                                /*if(TimeCount == Set_minuite){
+                                      Firebase.setInt("LogUser/Lasted/StatusDevice" , 0);   // LOGOUT ON WEB 
+                                    // Clear Parameter 
+                                      previousTime = 0;
+                                      showTime = 0;
+                                      TimeCount = 0;   
+                                    //Clear STATE  
+                                      STATE = 0;
+                                }*/
+                                
                           
                         }//End else
                     
                }//End if Auth_Success            
 
       }//End STATE = 1
-
 }
 
 void Insert_Data(void){
@@ -251,51 +300,70 @@ void Insert_Data(void){
       valueObject["SBNumber"] = Bin_ID;
       valueObject["Logbottle"] = Count;         
      
-        //num = num+1;   
-       // String(num);
-        Firebase.push("History",valueObject);
+      Firebase.push("History",valueObject);
             
     
       if (Firebase.failed()) {
        Serial.print("Set"+ UID +"FAILED");
        Serial.println(Firebase.error());  
        return ;
-       } 
-
-      Serial.println("Set ===> "+ UID +"  ==> OK");
+       }
+      //Serial.println("Set ===> "+ UID +"  ==> OK");
       delay(1000);
       Firebase.setInt("LogUser/Lasted/StatusDevice" , 0);      
       Count = 0;     
 }
 
 void Ready_ToPush(){
-     LED_Blink(3);
+     //LED_Blink(3);
      lcd.clear();
      lcd.setCursor(0, 0);
      lcd.print("Ready to Insert!");
-     for(int i=0; i <3 ;i++){                                   
+     for(int i=0; i < 5 ;i++){                                   
           lcd.noDisplay();
-          delay(500);             
+          delay(300);             
               lcd.setCursor(0, 1);
-              lcd.print(" V V V V V V V ");  
+              lcd.print("V              V");    
           lcd.display();
-          delay(500);
-    }  
-    delay(500);
-    beep(1000);
+          delay(300);           
+          lcd.noDisplay();
+          delay(300);             
+              lcd.setCursor(0, 1);
+              lcd.print("  V         V   ");    
+          lcd.display();
+          delay(300);     
+          lcd.noDisplay();
+          delay(300);             
+              lcd.setCursor(0, 1);
+              lcd.print("     V    V     ");    
+          lcd.display();
+          delay(300);    
+          lcd.noDisplay();
+          delay(300);             
+              lcd.setCursor(0, 1);
+              lcd.print("        V       ");    
+          lcd.display();
+          delay(300); 
+       
+    } 
+      lcd.setCursor(0, 1);
+      lcd.print(" Put The Bottle "); 
+    beep(500);
+    
     StandBy_State = 1;    
 } 
 
-void LED_Blink(int Round){
+/*void LED_Blink(int Round){
   for(int i=0; i < Round ;i++){
+      beep(300);
       digitalWrite(D8,HIGH);
       delay(300);
       digitalWrite(D8,LOW);
       delay(200); 
-      beep(300);
+     
   }
 }
-
+*/
 void beep(int Delay){
       digitalWrite(Buzzer , HIGH);
       delay(Delay);
@@ -303,3 +371,42 @@ void beep(int Delay){
       delay(Delay);
 } 
 
+int Time_Counter(int Set_Time_Sec){
+  showTime = millis();
+  unsigned int Second = (showTime - previousTime) / 1000;
+      /*  Serial.print("setTime: ");
+          Serial.print(Set_Time_Sec); //แสดงค่าเวลาที่ตั้งไว้
+          Serial.print("   showTime: ");
+          Serial.print(showTime); //แสดงเวลา millis() ของ Arduino ซึ่งจะเป็นค่าที่วิ่งไปเรื่อยๆ
+          Serial.print("   previousTime: ");
+          Serial.print(previousTime); //แสดงค่าสุดท้ายของ previousTime หลังจากที่กดปุ่ม A ซึ่งจะเป็นค่าคงที่ ไม่วิ่งตาม millis()
+          Serial.print("   Time: ");       
+          Serial.print(Second); //แสดงผลการคำนวณว่าจับเวลาไปกี่วิแล้ว
+          Serial.println(" Sec");*/
+          //Serial.println(showTime);
+          if(Second  >=  Set_Time_Sec){ //ถ้าเวลาที่จับได้ มากกว่าหรือเท่ากับเวลาที่ตั้งไว้...         
+               minuite++;
+               previousTime = showTime;
+               return minuite;
+           }  
+                  
+}
+
+void ConnectWiFi(){
+    lcd.setCursor(0, 0);
+    lcd.print("   connecting   ");   
+    lcd.setCursor(0, 1);
+    lcd.print("===="); 
+    delay(500);
+    lcd.setCursor(4, 1);
+    lcd.print("====");
+    delay(500);
+    lcd.setCursor(8, 1);
+    lcd.print("====");
+    delay(500);
+    lcd.setCursor(12, 1);
+    lcd.print("===>");
+    delay(500);  
+    lcd.clear();
+
+}
